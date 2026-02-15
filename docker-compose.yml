@@ -1,6 +1,6 @@
 services:
   smls:
-    image: ghcr.io/lucakiebel/simple-mailing-list-service:v0.1.0
+    image: ghcr.io/lucakiebel/simple-mailing-list-service:v0.1.1
     container_name: simple-mailing-lists-service
     ports:
       - "127.0.0.1:3000:3000"
