@@ -7,6 +7,7 @@ import { List } from '../lists/list.entity';
 import { ListMember } from '../lists/list-member.entity';
 import { PendingMessage } from '../messages/pending-message.entity';
 import { ModerationToken } from '../moderation/moderation-token.entity';
+import { ImapController } from './imap.controller';
 
 @Module({
   imports: [
@@ -20,5 +21,6 @@ import { ModerationToken } from '../moderation/moderation-token.entity';
     ]),
   ],
   providers: [ImapService],
+  controllers: [ImapController],
 })
 export class ImapModule {}

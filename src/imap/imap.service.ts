@@ -21,6 +21,7 @@ import {
 } from '../moderation/moderation-token.entity';
 import { MailService } from '../mail/mail.service';
 import { randomUUID } from 'crypto';
+import { NodemailerNestLogger } from '../mail/nodemailer-logger';
 
 interface ImapError extends Error {
   code: string;
@@ -59,9 +60,6 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Äußerer Loop: verbindet, pollt, reconnectet bei Fehlern
-   */
   private async runWorker() {
     while (this.running) {
       try {
@@ -89,30 +87,29 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Einmalige Verbindung + Mailbox öffnen
-   */
   private async connect() {
+    const host = this.config.getOrThrow<string>('IMAP_HOST');
+    const port = Number(this.config.get('IMAP_PORT') ?? 993);
+
+    this.logger.log(`Connecting to IMAP ${host}:${port} (secure=true)`);
+
     this.client = new ImapFlow({
-      host: this.config.getOrThrow('IMAP_HOST'),
-      port: Number(this.config.get('IMAP_PORT')),
-      secure: this.config.get('IMAP_TLS') === 'true',
+      host,
+      port,
+      secure: true, // always use tls
       auth: {
         user: this.config.getOrThrow('IMAP_USER'),
         pass: this.config.get('IMAP_PASS'),
       },
+      logger: new NodemailerNestLogger(this.logger),
     });
 
     this.client.on('error', (err) => {
-      // dieser Handler verhindert "Unhandled 'error' event"
       this.logger.error(`IMAP error: ${err.message}`, err as any);
-      // Fehler selbst führt dazu, dass die Verbindung schließt;
-      // der äußere Worker-Loop merkt das über Exceptions in pollLoop/checkInbox.
     });
 
     this.client.on('close', () => {
       this.logger.warn('IMAP connection closed');
-      // KEIN logout() und KEIN start() hier – das macht der Worker-Loop
     });
 
     await this.client.connect();
@@ -120,16 +117,12 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('IMAP connected, start polling');
   }
 
-  /**
-   * Innerer Poll-Loop, bricht bei Verbindungsfehlern ab
-   */
   private async pollLoop() {
     while (this.running && this.client && this.client.usable) {
       try {
         await this.checkInbox();
       } catch (err) {
         this.logger.error('Error in checkInbox', err);
-        // Fehler nach außen geben → runWorker reconnectet
         throw err;
       }
       await new Promise((res) => setTimeout(res, 30_000));
@@ -143,23 +136,42 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      for await (const msg of client.fetch({ seen: false }, { source: true })) {
-        if (!msg.source) continue;
+      const unseenSeqNums = await client.search({ seen: false });
+      if (!unseenSeqNums || !unseenSeqNums.length) {
+        this.logger.verbose('No unseen messages in INBOX');
+        return;
+      }
+
+      this.logger.verbose(
+        `Found ${unseenSeqNums.length} unseen messages`,
+        unseenSeqNums,
+      );
+
+      for (const seq of unseenSeqNums) {
+        this.logger.verbose(`Processing message seq=${seq}`);
+
+        const msg = await client.fetchOne(seq, { source: true, flags: true });
+        if (!msg || !msg.source) {
+          this.logger.warn(`No source for message seq=${seq}, skipping`);
+          continue;
+        }
+
         const raw = msg.source;
-        await this.handleIncomingMessage(raw);
-        await client.messageFlagsAdd(msg.seq, ['\\Seen']);
+
+        try {
+          await this.handleIncomingMessage(raw);
+          await client.messageFlagsAdd(seq, ['\\Seen']);
+          this.logger.verbose(`Marked message seq=${seq} as \\Seen`);
+        } catch (err) {
+          this.logger.error(`Error while handling message seq=${seq}`, err);
+        }
       }
     } catch (err: unknown) {
-      // Typische Fehlercodes von ImapFlow:
-      //  - ETIMEOUT (Socket timeout)
-      //  - NoConnection (Connection not available)
-      if (
-        (err as ImapError).code === 'NoConnection' ||
-        (err as ImapError).code === 'ETIMEOUT'
-      ) {
-        this.logger.warn(`checkInbox aborted: ${(err as ImapError).code}`);
+      const code = (err as ImapError).code;
+      if (code === 'NoConnection' || code === 'ETIMEOUT') {
+        this.logger.warn(`checkInbox aborted: ${code}`);
       } else {
-        this.logger.error('Unexpected error in checkInbox', err);
+        this.logger.error('Unexpected error in checkInbox', err as any);
       }
       throw err;
     }
@@ -167,6 +179,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
   private async handleIncomingMessage(raw: Buffer) {
     const parsed = await simpleParser(raw);
+
+    //console.log(parsed, JSON.stringify(parsed.to));
 
     const from = parsed.from?.value[0]?.address?.toLowerCase();
     if (!from) {
@@ -182,6 +196,10 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
             recipients.push(address.address!.toLowerCase());
           });
         });
+      } else {
+        v?.value.forEach((address) => {
+          recipients.push(address.address!.toLowerCase());
+        });
       }
     };
 
@@ -193,9 +211,13 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    this.logger.verbose('Recipients found', recipients);
+
     const lists = await this.listsRepo.find({
       where: { email: In(recipients) },
     });
+
+    this.logger.verbose('Lists found', lists);
 
     if (!lists.length) {
       this.logger.warn(`No lists for recipients ${recipients.join(', ')}`);
@@ -207,6 +229,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     const html = parsed.html || undefined;
 
     for (const list of lists) {
+      this.logger.verbose('Processing for list', list.id, from, subject);
       await this.processForList(list, from, subject, text, html, raw);
     }
   }
@@ -224,24 +247,32 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       relations: ['list'],
     });
 
+    this.logger.verbose('Sending member found', member);
+
     const isMember = !!member;
     const isAdmin = member?.role === MemberRole.ADMIN;
 
     if (list.mode === ListMode.OPEN) {
+      this.logger.verbose('Distributing because list is open');
       await this.distributeToMembers(list, subject, text, html);
       return;
     }
 
     if (isAdmin) {
+      this.logger.verbose('Distributing because sending member is admin');
       await this.distributeToMembers(list, subject, text, html);
       return;
     }
 
     if (list.mode === ListMode.MEMBERS_ONLY && isMember) {
+      this.logger.verbose(
+        'Distributing because sending member is member of list',
+      );
       await this.distributeToMembers(list, subject, text, html);
       return;
     }
 
+    this.logger.verbose('Enqueueing for moderation');
     await this.enqueueForModeration(list, fromEmail, subject, raw, text, html);
   }
 
@@ -255,13 +286,25 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       where: { list: { id: list.id }, active: true },
     });
 
+    const baseUrl = this.config.getOrThrow<string>('PUBLIC_BASE_URL');
+
+    this.logger.verbose('Distributing to members', members);
+
     for (const m of members) {
+      const unsubscribeUrl = m.unsubscribeToken
+        ? `${baseUrl}/unsubscribe/${m.unsubscribeToken}`
+        : undefined;
+
+      this.logger.verbose('Distributing to member', m.name);
+
       await this.mailService.sendMail({
         to: m.email,
         subject,
         text,
         html,
+        unsubscribeUrl,
       });
+
       await new Promise((res) => setTimeout(res, 100));
     }
   }
@@ -282,6 +325,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       status: PendingMessageStatus.PENDING,
     });
     await this.pendingRepo.save(pending);
+    this.logger.verbose('Enqueued for moderation');
+    this.logger.verbose('Pending', pending);
 
     const approveToken = this.tokenRepo.create({
       message: pending,
@@ -289,18 +334,21 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       action: ModerationAction.APPROVE,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
+    this.logger.verbose('Approve-Token', approveToken);
     const rejectToken = this.tokenRepo.create({
       message: pending,
       token: randomUUID(),
       action: ModerationAction.REJECT,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
+    this.logger.verbose('Reject-Token', rejectToken);
 
     await this.tokenRepo.save([approveToken, rejectToken]);
 
     const admins = await this.membersRepo.find({
       where: { list: { id: list.id }, role: MemberRole.ADMIN, active: true },
     });
+    this.logger.verbose('Admins', admins);
 
     const baseUrl = this.config.getOrThrow<string>('PUBLIC_BASE_URL');
     const approveUrl = `${baseUrl}/moderate/${approveToken.token}`;
@@ -308,7 +356,16 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
     const preview = text.slice(0, 300);
 
+    this.logger.verbose(
+      'Send to admins:',
+      preview,
+      approveUrl,
+      baseUrl,
+      rejectUrl,
+    );
+
     for (const admin of admins) {
+      this.logger.verbose('Sending to admin:', admin);
       await this.mailService.sendMail({
         to: admin.email,
         subject: `[Moderation] Neue Nachricht für Liste "${list.name}"`,
@@ -324,5 +381,65 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
           : undefined,
       });
     }
+  }
+
+  async listInboxMessages() {
+    const host = this.config.getOrThrow<string>('IMAP_HOST');
+    const port = Number(this.config.get('IMAP_PORT'));
+    const secure = this.config.get('IMAP_TLS') === 'true';
+    const user = this.config.getOrThrow<string>('IMAP_USER');
+    const pass = this.config.get<string>('IMAP_PASS');
+
+    const client = new ImapFlow({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+    });
+
+    const logger = this.logger;
+    const result: Record<string, any>[] = [];
+
+    try {
+      await client.connect();
+      await client.mailboxOpen('INBOX');
+
+      const exists = client.mailbox;
+      if (!exists) {
+        await client.logout();
+        return [];
+      }
+
+      const startSeq = Math.max(1);
+      const range = `${startSeq}:*`;
+
+      for await (const msg of client.fetch(range, { envelope: true })) {
+        const env = msg.envelope;
+        result.push({
+          seq: msg.seq,
+          uid: msg.uid,
+          subject: env?.subject,
+          date: env?.date,
+          from: env?.from?.map((a) => a.address),
+          to: env?.to?.map((a) => a.address),
+          cc: env?.cc?.map((a) => a.address),
+          labels: msg.labels,
+          flags: msg.flags,
+        });
+      }
+
+      await client.logout();
+    } catch (err) {
+      logger.error('Error while listing inbox messages', err);
+      try {
+        if (!client.usable) {
+          await client.logout();
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return result;
   }
 }
