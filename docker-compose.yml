@@ -1,14 +1,11 @@
 services:
   smls:
+    image: ghcr.io/luca-kiebel/simple-mailing-lists-service:latest
     container_name: simple-mailing-lists-service
-    build:
-      context: .
-      dockerfile: Dockerfile
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
       - ./data:/app/data
     env_file:
       - .env
-    tty: true
     restart: unless-stopped
