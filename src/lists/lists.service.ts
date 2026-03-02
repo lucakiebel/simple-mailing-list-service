@@ -6,6 +6,7 @@ import { ListMember, MemberRole } from './list-member.entity';
 import { CreateListDto } from './dto/create-list.dto';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { randomUUID } from 'crypto';
+import { ExternalMemberDto } from './dto/external-member.dto';
 
 @Injectable()
 export class ListsService {
@@ -73,5 +74,80 @@ export class ListsService {
     });
     if (!member) throw new NotFoundException('Member not found');
     return member;
+  }
+
+  async syncMembersFromExternal(
+    listId: number,
+    source: string,
+    externalMembers: ExternalMemberDto[],
+  ): Promise<void> {
+    const list = await this.findList(listId);
+
+    await this.membersRepo.manager.transaction(async (em) => {
+      const repo = em.getRepository(ListMember);
+
+      const existing = await repo.find({
+        where: { list: { id: list.id }, source },
+      });
+
+      const existingByExtId = new Map(
+        existing
+          .filter((m) => m.externalId)
+          .map((m) => [m.externalId as string, m]),
+      );
+
+      const seen = new Set<string>();
+
+      for (const ext of externalMembers) {
+        const email = ext.email.toLowerCase();
+        seen.add(ext.externalId);
+
+        const current = existingByExtId.get(ext.externalId);
+
+        if (!current) {
+          const member = repo.create({
+            list,
+            email,
+            name: ext.name,
+            role: MemberRole.MEMBER,
+            active: true,
+            unsubscribeToken: randomUUID(),
+            externalId: ext.externalId,
+            source,
+          });
+          await repo.save(member);
+        } else {
+          let changed = false;
+
+          if (current.email !== email) {
+            current.email = email;
+            changed = true;
+          }
+          if (ext.name && current.name !== ext.name) {
+            current.name = ext.name;
+            changed = true;
+          }
+
+          if (!current.active) {
+            changed = true;
+          }
+
+          if (changed) {
+            await repo.save(current);
+          }
+        }
+      }
+
+      const toDeactivate = existing.filter(
+        (m) => m.externalId && !seen.has(m.externalId),
+      );
+      for (const m of toDeactivate) {
+        m.active = false;
+        //optional: repo.remove(m)
+      }
+      if (toDeactivate.length > 0) {
+        await repo.save(toDeactivate);
+      }
+    });
   }
 }

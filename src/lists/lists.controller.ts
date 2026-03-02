@@ -6,9 +6,9 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 import { ListsService } from './lists.service';
 import { CreateListDto } from './dto/create-list.dto';
@@ -16,7 +16,8 @@ import { CreateMemberDto } from './dto/create-member.dto';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import { SyncMemberDto } from './dto/external-member.dto';
 
 @Controller('lists')
 @ApiBearerAuth()
@@ -84,6 +85,16 @@ export class ListsController {
 
     return res.send(
       `Du wurdest von der Liste "${member.list.name}" abgemeldet.`,
+    );
+  }
+
+  @Put(':id/sync-members')
+  @Roles('admin')
+  syncMembers(@Param('id') id: string, @Body() dto: SyncMemberDto) {
+    return this.listsService.syncMembersFromExternal(
+      Number(id),
+      dto.source,
+      dto.members,
     );
   }
 }

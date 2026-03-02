@@ -1,4 +1,10 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { List } from './list.entity';
 
 export enum MemberRole {
@@ -7,6 +13,7 @@ export enum MemberRole {
 }
 
 @Entity('list_members')
+@Index(['list', 'externalId', 'source'], { unique: true })
 export class ListMember {
   @PrimaryGeneratedColumn()
   id: number;
@@ -28,4 +35,10 @@ export class ListMember {
 
   @Column({ nullable: true, unique: true })
   unsubscribeToken?: string;
+
+  @Column({ nullable: true })
+  externalId?: string;
+
+  @Column({ nullable: true })
+  source?: string;
 }
