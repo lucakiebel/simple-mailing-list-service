@@ -52,7 +52,7 @@ export class ListsService {
     const list = await this.findList(listId);
     return this.membersRepo.find({
       where: { list: { id: list.id } },
-      relations: ['lists'],
+      relations: ['list'],
     });
   }
 
@@ -69,7 +69,7 @@ export class ListsService {
   async findMemberByUnsubscribeToken(token: string): Promise<ListMember> {
     const member = await this.membersRepo.findOne({
       where: { unsubscribeToken: token },
-      relations: ['lists'],
+      relations: ['list'],
     });
     if (!member) throw new NotFoundException('Member not found');
     return member;

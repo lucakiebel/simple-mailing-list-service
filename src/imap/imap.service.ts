@@ -292,7 +292,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
     for (const m of members) {
       const unsubscribeUrl = m.unsubscribeToken
-        ? `${baseUrl}/unsubscribe/${m.unsubscribeToken}`
+        ? `${baseUrl}/lists/unsubscribe/${m.unsubscribeToken}`
         : undefined;
 
       this.logger.verbose('Distributing to member', m.name);

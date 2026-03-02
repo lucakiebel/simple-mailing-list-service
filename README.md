@@ -32,7 +32,7 @@ It polls an IMAP mailbox (e.g. from Mailcow), distributes incoming messages to o
 
 - **Unsubscribe**
     - Each member has a unique `unsubscribeToken`
-    - `/unsubscribe/:token` immediately deactivates the member
+    - `/lists/unsubscribe/:token` immediately deactivates the member
     - Outgoing mails include:
         - `List-Unsubscribe` + `List-Unsubscribe-Post` headers
         - Visible unsubscribe link in the email body (text + HTML)
@@ -334,7 +334,7 @@ HTTP API (Summary)
 
 ### Unsubscribe
 
-*   GET /unsubscribe/:token
+*   GET /lists/unsubscribe/:token
 
     *   Deactivates the corresponding ListMember
 

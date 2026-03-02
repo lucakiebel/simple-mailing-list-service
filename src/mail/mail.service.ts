@@ -24,7 +24,7 @@ export class MailService {
     this.transporter = nodemailer.createTransport({
       host: this.config.getOrThrow('SMTP_HOST'),
       port: Number(this.config.getOrThrow('SMTP_PORT')),
-      secure: true,
+      secure: this.config.getOrThrow('SMTP_SECURE') === 'true',
       auth: {
         user: this.config.getOrThrow('SMTP_USER'),
         pass: this.config.getOrThrow('SMTP_PASS'),
