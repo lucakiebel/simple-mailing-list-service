@@ -18,6 +18,8 @@ import { ApiBearerAuth } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
 import type { Response } from 'express';
 import { SyncMemberDto } from './dto/external-member.dto';
+import { MemberRole } from './list-member.entity';
+import { ListMode } from './list.entity';
 
 @Controller('lists')
 @ApiBearerAuth()
@@ -42,6 +44,12 @@ export class ListsController {
     return this.listsService.findList(Number(id));
   }
 
+  @Patch(':id/mode/:mode')
+  @Roles('admin')
+  updateListMode(@Param('id') id: string, @Param('mode') mode: ListMode) {
+    return this.listsService.updateListMode(Number(id), mode);
+  }
+
   @Get(':id/members')
   @Roles('admin')
   getMembers(@Param('id') id: string) {
@@ -64,6 +72,15 @@ export class ListsController {
       Number(memberId),
       active !== 'false',
     );
+  }
+
+  @Patch('members/:memberId/role/:role')
+  @Roles('admin')
+  changeMemberRole(
+    @Param('memberId') memberId: string,
+    @Param('role') role: MemberRole,
+  ) {
+    return this.listsService.changeMemberRole(Number(memberId), role);
   }
 
   @Get('unsubscribe/:token')

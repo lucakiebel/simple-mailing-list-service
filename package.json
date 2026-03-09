@@ -1,7 +1,7 @@
 {
   "name": "simple-mailing-list-service",
   "image": "ghcr.io/lucakiebel/simple-mailing-list-service",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "",
   "author": "",
   "private": true,

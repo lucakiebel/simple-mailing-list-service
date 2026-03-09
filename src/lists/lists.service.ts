@@ -34,6 +34,12 @@ export class ListsService {
     return list;
   }
 
+  async updateListMode(id: number, mode: ListMode) {
+    const list = await this.findList(id);
+    list.mode = mode;
+    return this.listsRepo.save(list);
+  }
+
   async addMember(listId: number, dto: CreateMemberDto): Promise<ListMember> {
     const list = await this.findList(listId);
 
@@ -64,6 +70,16 @@ export class ListsService {
     const member = await this.membersRepo.findOne({ where: { id: memberId } });
     if (!member) throw new NotFoundException('Member not found');
     member.active = active;
+    return this.membersRepo.save(member);
+  }
+
+  async changeMemberRole(
+    memberId: number,
+    role: MemberRole,
+  ): Promise<ListMember> {
+    const member = await this.membersRepo.findOne({ where: { id: memberId } });
+    if (!member) throw new NotFoundException('Member not found');
+    member.role = role;
     return this.membersRepo.save(member);
   }
 
