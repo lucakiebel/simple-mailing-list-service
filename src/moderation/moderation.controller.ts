@@ -10,6 +10,7 @@ import { MailService } from '../mail/mail.service';
 import type { Response } from 'express';
 import { ListMember } from '../lists/list-member.entity';
 import { Public } from '../auth/decorators/public.decorator';
+import { Attachment } from 'nodemailer/lib/mailer';
 
 @Controller('moderate')
 export class ModerationController {
@@ -54,11 +55,23 @@ export class ModerationController {
       const subject = parsed.subject || pending.subject || '';
       const text = parsed.text || '';
 
+      const attachments: Attachment[] = parsed.attachments.map((att) => ({
+        filename: att.filename || 'attachment',
+        content: att.content,
+        contentType: att.contentType,
+        contentDisposition: att.contentDisposition as
+          | 'attachment'
+          | 'inline'
+          | undefined,
+        cid: att.cid || undefined,
+      }));
+
       for (const m of members) {
         await this.mailService.sendMail({
           to: m.email,
           subject,
           text,
+          attachments,
         });
       }
 

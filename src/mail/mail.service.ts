@@ -1,13 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { Attachment } from 'nodemailer/lib/mailer';
 
 export interface SendMailOptions {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: Attachment[];
   unsubscribeUrl?: string;
+  replyTo?: string;
 }
 
 @Injectable()
@@ -32,13 +35,7 @@ export class MailService {
     });
   }
 
-  async sendMail(opts: {
-    to: string;
-    subject: string;
-    text: string;
-    html?: string;
-    unsubscribeUrl?: string;
-  }) {
+  async sendMail(opts: SendMailOptions) {
     this.logger.verbose('Sending Email', {
       to: opts.to,
       subject: opts.subject,
@@ -74,11 +71,13 @@ export class MailService {
 
     const info = <{ messageId: string }>await this.transporter.sendMail({
       from: `"${this.fromName}" <${this.fromEmail}>`,
+      replyTo: opts.replyTo ?? this.fromEmail,
       to: opts.to,
       subject: opts.subject,
       text,
       html,
       headers,
+      attachments: opts.attachments,
     });
 
     this.logger.verbose(`Email sent, messageId=${info.messageId}`);

@@ -22,6 +22,7 @@ import {
 import { MailService } from '../mail/mail.service';
 import { randomUUID } from 'crypto';
 import { NodemailerNestLogger } from '../mail/nodemailer-logger';
+import { Attachment } from 'nodemailer/lib/mailer';
 
 interface ImapError extends Error {
   code: string;
@@ -180,7 +181,18 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
   private async handleIncomingMessage(raw: Buffer) {
     const parsed = await simpleParser(raw);
 
-    //console.log(parsed, JSON.stringify(parsed.to));
+    const attachments: Attachment[] = parsed.attachments.map((att) => ({
+      filename: att.filename || 'attachment',
+      content: att.content,
+      contentType: att.contentType,
+      contentDisposition: att.contentDisposition as
+        | 'attachment'
+        | 'inline'
+        | undefined,
+      cid: att.cid || undefined,
+    }));
+
+    const replyTo = parsed.from?.text || undefined;
 
     const from = parsed.from?.value[0]?.address?.toLowerCase();
     if (!from) {
@@ -230,7 +242,16 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
     for (const list of lists) {
       this.logger.verbose('Processing for list', list.id, from, subject);
-      await this.processForList(list, from, subject, text, html, raw);
+      await this.processForList(
+        list,
+        from,
+        subject,
+        text,
+        html,
+        raw,
+        attachments,
+        replyTo,
+      );
     }
   }
 
@@ -241,6 +262,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     text: string,
     html: string | undefined,
     raw: Buffer,
+    attachments?: Attachment[],
+    replyTo?: string,
   ) {
     const member = await this.membersRepo.findOne({
       where: { list: { id: list.id }, email: fromEmail, active: true },
@@ -254,13 +277,27 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
     if (list.mode === ListMode.OPEN) {
       this.logger.verbose('Distributing because list is open');
-      await this.distributeToMembers(list, subject, text, html);
+      await this.distributeToMembers(
+        list,
+        subject,
+        text,
+        html,
+        attachments,
+        replyTo,
+      );
       return;
     }
 
     if (isAdmin) {
       this.logger.verbose('Distributing because sending member is admin');
-      await this.distributeToMembers(list, subject, text, html);
+      await this.distributeToMembers(
+        list,
+        subject,
+        text,
+        html,
+        attachments,
+        replyTo,
+      );
       return;
     }
 
@@ -268,12 +305,28 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       this.logger.verbose(
         'Distributing because sending member is member of list',
       );
-      await this.distributeToMembers(list, subject, text, html);
+      await this.distributeToMembers(
+        list,
+        subject,
+        text,
+        html,
+        attachments,
+        replyTo,
+      );
       return;
     }
 
     this.logger.verbose('Enqueueing for moderation');
-    await this.enqueueForModeration(list, fromEmail, subject, raw, text, html);
+    await this.enqueueForModeration(
+      list,
+      fromEmail,
+      subject,
+      raw,
+      text,
+      html,
+      attachments,
+      replyTo,
+    );
   }
 
   private async distributeToMembers(
@@ -281,6 +334,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     subject: string,
     text: string,
     html?: string,
+    attachments?: Attachment[],
+    replyTo?: string,
   ) {
     const members = await this.membersRepo.find({
       where: { list: { id: list.id }, active: true },
@@ -299,10 +354,12 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
       await this.mailService.sendMail({
         to: m.email,
+        replyTo,
         subject,
         text,
         html,
         unsubscribeUrl,
+        attachments,
       });
 
       await new Promise((res) => setTimeout(res, 100));
@@ -316,6 +373,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     raw: Buffer,
     text: string,
     html?: string,
+    attachments?: Attachment[],
+    replyTo?: string,
   ) {
     const pending = this.pendingRepo.create({
       list,
@@ -368,7 +427,9 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       this.logger.verbose('Sending to admin:', admin);
       await this.mailService.sendMail({
         to: admin.email,
+        replyTo: replyTo,
         subject: `[Moderation] Neue Nachricht für Liste "${list.name}"`,
+        attachments,
         text:
           `Von: ${fromEmail}\nBetreff: ${subject}\n\n` +
           `Vorschau:\n${preview}\n\n` +

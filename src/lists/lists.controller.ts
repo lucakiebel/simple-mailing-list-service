@@ -20,11 +20,15 @@ import type { Response } from 'express';
 import { SyncMemberDto } from './dto/external-member.dto';
 import { MemberRole } from './list-member.entity';
 import { ListMode } from './list.entity';
+import { ConfigService } from '@nestjs/config';
 
 @Controller('lists')
 @ApiBearerAuth()
 export class ListsController {
-  constructor(private readonly listsService: ListsService) {}
+  constructor(
+    private readonly listsService: ListsService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Post()
   @Roles('admin')
@@ -94,7 +98,8 @@ export class ListsController {
 
     if (!member.active) {
       return res.send(
-        `Du bist bereits von der Liste "${member.list.name}" abgemeldet.`,
+        `Du bist bereits von der Liste "${member.list.name}" abgemeldet. \n Wieder anmelden? \n \n \n 
+        https://${this.config.getOrThrow('PUBLIC_BASE_URL')}/lists/subscribe/${token}`,
       );
     }
 
@@ -102,6 +107,28 @@ export class ListsController {
 
     return res.send(
       `Du wurdest von der Liste "${member.list.name}" abgemeldet.`,
+    );
+  }
+
+  @Get('subscribe/:token')
+  @Public()
+  async subscribe(@Param('token') token: string, @Res() res: Response) {
+    const member = await this.listsService.findMemberByUnsubscribeToken(token);
+
+    if (!member) {
+      return res.status(404).send('Ungültiger oder abgelaufener Abmeldelink.');
+    }
+
+    if (member.active) {
+      return res.send(
+        `Du bist bereits an der Liste "${member.list.name}" angemeldet.`,
+      );
+    }
+
+    await this.listsService.setMemberActive(member.id, true);
+
+    return res.send(
+      `Du wurdest an der Liste "${member.list.name}" angemeldet.`,
     );
   }
 
