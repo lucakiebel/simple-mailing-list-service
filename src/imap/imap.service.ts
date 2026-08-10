@@ -360,6 +360,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
         html,
         unsubscribeUrl,
         attachments,
+        from: { name: list.name, email: list.email },
       });
 
       await new Promise((res) => setTimeout(res, 100));
@@ -430,6 +431,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
         replyTo: replyTo,
         subject: `[Moderation] Neue Nachricht für Liste "${list.name}"`,
         attachments,
+        from: { name: list.name, email: list.email },
         text:
           `Von: ${fromEmail}\nBetreff: ${subject}\n\n` +
           `Vorschau:\n${preview}\n\n` +

@@ -11,6 +11,7 @@ export interface SendMailOptions {
   attachments?: Attachment[];
   unsubscribeUrl?: string;
   replyTo?: string;
+  from?: { name: string; email: string };
 }
 
 @Injectable()
@@ -69,9 +70,12 @@ export class MailService {
       headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
     }
 
+    const fromName = opts.from?.name ?? this.fromName;
+    const fromEmail = opts.from?.email ?? this.fromEmail;
+
     const info = <{ messageId: string }>await this.transporter.sendMail({
-      from: `"${this.fromName}" <${this.fromEmail}>`,
-      replyTo: opts.replyTo ?? this.fromEmail,
+      from: `"${fromName}" <${fromEmail}>`,
+      replyTo: opts.replyTo ?? fromEmail,
       to: opts.to,
       subject: opts.subject,
       text,

@@ -72,6 +72,7 @@ export class ModerationController {
           subject,
           text,
           attachments,
+          from: { name: pending.list.name, email: pending.list.email },
         });
       }
 
