@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ImapService } from './imap.service';
 import { MailModule } from '../mail/mail.module';
+import { DeliveryLogModule } from '../delivery-log/delivery-log.module';
 import { List } from '../lists/list.entity';
 import { ListMember } from '../lists/list-member.entity';
 import { PendingMessage } from '../messages/pending-message.entity';
@@ -13,6 +14,7 @@ import { ImapController } from './imap.controller';
   imports: [
     ConfigModule,
     MailModule,
+    DeliveryLogModule,
     TypeOrmModule.forFeature([
       List,
       ListMember,

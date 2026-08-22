@@ -1,7 +1,16 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ModerationAction, ModerationToken } from './moderation-token.entity';
+import {
+  ModerationAction,
+  ModerationToken,
+} from './moderation-token.entity';
 import {
   PendingMessage,
   PendingMessageStatus,
@@ -9,49 +18,72 @@ import {
 import { MailService } from '../mail/mail.service';
 import { DeliveryLogService } from '../delivery-log/delivery-log.service';
 import { DeliverySource } from '../delivery-log/delivery-log.entity';
-import type { Response } from 'express';
 import { ListMember } from '../lists/list-member.entity';
-import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiBearerAuth } from '@nestjs/swagger';
 import { Attachment } from 'nodemailer/lib/mailer';
 
-@Controller('moderate')
-export class ModerationController {
+class ModerateActionDto {
+  action: 'approve' | 'reject';
+}
+
+@Controller('lists/:id/messages/pending')
+@ApiBearerAuth()
+export class ModerationAdminController {
   constructor(
-    @InjectRepository(ModerationToken)
-    private tokenRepo: Repository<ModerationToken>,
     @InjectRepository(PendingMessage)
     private pendingRepo: Repository<PendingMessage>,
+    @InjectRepository(ModerationToken)
+    private tokenRepo: Repository<ModerationToken>,
     @InjectRepository(ListMember)
     private memberRepo: Repository<ListMember>,
     private mailService: MailService,
     private deliveryLogService: DeliveryLogService,
   ) {}
 
-  @Get(':token')
-  @Public()
-  async handle(@Param('token') token: string, @Res() res: Response) {
-    const moderationToken = await this.tokenRepo.findOne({
-      where: { token },
-      relations: ['message', 'message.list'],
+  @Get()
+  @Roles('admin')
+  async getPending(@Param('id') id: string) {
+    const messages = await this.pendingRepo.find({
+      where: { list: { id: Number(id) }, status: PendingMessageStatus.PENDING },
+      relations: ['list'],
+      order: { id: 'DESC' },
     });
 
-    if (!moderationToken) {
-      return res.status(400).send('Ungültiger oder abgelaufener Link.');
-    }
-    if (moderationToken.usedAt || moderationToken.expiresAt < new Date()) {
-      return res
-        .status(400)
-        .send('Dieser Link wurde bereits verwendet oder ist abgelaufen.');
+    return messages.map((m) => ({
+      id: m.id,
+      fromEmail: m.fromEmail,
+      subject: m.subject,
+      status: m.status,
+      createdAt: m.id, // UUID v7 enthält Zeitstempel
+    }));
+  }
+
+  @Post(':pendingId')
+  @Roles('admin')
+  async moderate(
+    @Param('id') id: string,
+    @Param('pendingId') pendingId: string,
+    @Body() dto: ModerateActionDto,
+  ) {
+    const pending = await this.pendingRepo.findOne({
+      where: { id: pendingId, list: { id: Number(id) } },
+      relations: ['list'],
+    });
+
+    if (!pending) {
+      return { error: 'Pending message not found' };
     }
 
-    const pending = moderationToken.message;
+    if (pending.status !== PendingMessageStatus.PENDING) {
+      return { error: 'Message already moderated' };
+    }
 
-    if (moderationToken.action === ModerationAction.APPROVE) {
+    if (dto.action === 'approve') {
       const members = await this.memberRepo.find({
         where: { list: { id: pending.list.id }, active: true },
       });
 
-      // simpleParser auf rawMessage, um Subject/Text zu bekommen
       const parsed = await (
         await import('mailparser')
       ).simpleParser(pending.rawMessage);
@@ -98,22 +130,15 @@ export class ModerationController {
       pending.status = PendingMessageStatus.APPROVED;
       await this.pendingRepo.save(pending);
 
-      moderationToken.usedAt = new Date();
-      await this.tokenRepo.save(moderationToken);
-
-      return res.send(
-        'Die Nachricht wurde freigegeben und an die Liste verteilt.',
-      );
-    } else if (moderationToken.action === ModerationAction.REJECT) {
-      pending.status = PendingMessageStatus.REJECTED;
-      await this.pendingRepo.save(pending);
-
-      moderationToken.usedAt = new Date();
-      await this.tokenRepo.save(moderationToken);
-
-      return res.send('Die Nachricht wurde abgelehnt.');
+      return { status: 'approved' };
     }
 
-    return res.status(400).send('Unbekannte Aktion.');
+    if (dto.action === 'reject') {
+      pending.status = PendingMessageStatus.REJECTED;
+      await this.pendingRepo.save(pending);
+      return { status: 'rejected' };
+    }
+
+    return { error: 'Invalid action' };
   }
 }

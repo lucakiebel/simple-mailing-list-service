@@ -11,6 +11,8 @@ import { MessagesModule } from './messages/messages.module';
 import { MailModule } from './mail/mail.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { AuthModule } from './auth/auth.module';
+import { DeliveryLog } from './delivery-log/delivery-log.entity';
+import { DeliveryLogModule } from './delivery-log/delivery-log.module';
 
 @Module({
   imports: [
@@ -18,7 +20,7 @@ import { AuthModule } from './auth/auth.module';
     TypeOrmModule.forRoot({
       type: 'sqlite',
       database: process.env.DATABASE_PATH || './mailing.db',
-      entities: [List, ListMember, PendingMessage, ModerationToken],
+      entities: [List, ListMember, PendingMessage, ModerationToken, DeliveryLog],
       synchronize: true,
     }),
     MailModule,
@@ -27,6 +29,7 @@ import { AuthModule } from './auth/auth.module';
     ListsModule,
     MessagesModule,
     AuthModule,
+    DeliveryLogModule,
   ],
 })
 export class AppModule {}

@@ -20,6 +20,8 @@ import {
   ModerationToken,
 } from '../moderation/moderation-token.entity';
 import { MailService } from '../mail/mail.service';
+import { DeliveryLogService } from '../delivery-log/delivery-log.service';
+import { DeliverySource } from '../delivery-log/delivery-log.entity';
 import { randomUUID } from 'crypto';
 import { NodemailerNestLogger } from '../mail/nodemailer-logger';
 import { Attachment } from 'nodemailer/lib/mailer';
@@ -37,6 +39,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private config: ConfigService,
     private mailService: MailService,
+    private deliveryLogService: DeliveryLogService,
     @InjectRepository(List) private listsRepo: Repository<List>,
     @InjectRepository(ListMember) private membersRepo: Repository<ListMember>,
     @InjectRepository(PendingMessage)
@@ -131,6 +134,8 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async checkInbox() {
+    this.lastPollAt = new Date();
+
     const client = this.client;
     if (!client || !client.usable) {
       throw new Error('IMAP client not connected');
@@ -193,6 +198,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     }));
 
     const replyTo = parsed.from?.text || undefined;
+    const messageId = parsed.messageId || undefined;
 
     const from = parsed.from?.value[0]?.address?.toLowerCase();
     if (!from) {
@@ -251,6 +257,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
         raw,
         attachments,
         replyTo,
+        messageId,
       );
     }
   }
@@ -264,6 +271,7 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     raw: Buffer,
     attachments?: Attachment[],
     replyTo?: string,
+    messageId?: string,
   ) {
     const member = await this.membersRepo.findOne({
       where: { list: { id: list.id }, email: fromEmail, active: true },
@@ -279,11 +287,13 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       this.logger.verbose('Distributing because list is open');
       await this.distributeToMembers(
         list,
+        fromEmail,
         subject,
         text,
         html,
         attachments,
         replyTo,
+        messageId,
       );
       return;
     }
@@ -292,11 +302,13 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       this.logger.verbose('Distributing because sending member is admin');
       await this.distributeToMembers(
         list,
+        fromEmail,
         subject,
         text,
         html,
         attachments,
         replyTo,
+        messageId,
       );
       return;
     }
@@ -307,11 +319,13 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       );
       await this.distributeToMembers(
         list,
+        fromEmail,
         subject,
         text,
         html,
         attachments,
         replyTo,
+        messageId,
       );
       return;
     }
@@ -331,11 +345,13 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
   private async distributeToMembers(
     list: List,
+    fromEmail: string,
     subject: string,
     text: string,
     html?: string,
     attachments?: Attachment[],
     replyTo?: string,
+    messageId?: string,
   ) {
     const members = await this.membersRepo.find({
       where: { list: { id: list.id }, active: true },
@@ -352,16 +368,33 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.verbose('Distributing to member', m.name);
 
-      await this.mailService.sendMail({
-        to: m.email,
-        replyTo,
+      const logEntry = await this.deliveryLogService.create({
+        messageId,
+        listId: list.id,
+        fromEmail,
         subject,
-        text,
-        html,
-        unsubscribeUrl,
-        attachments,
-        from: { name: list.name, email: list.email },
+        recipientEmail: m.email,
+        source: DeliverySource.DIRECT,
       });
+
+      try {
+        await this.mailService.sendMail({
+          to: m.email,
+          replyTo,
+          subject,
+          text,
+          html,
+          unsubscribeUrl,
+          attachments,
+          from: { name: list.name, email: list.email },
+        });
+
+        await this.deliveryLogService.markSent(logEntry.id);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.deliveryLogService.markFailed(logEntry.id, msg);
+        this.logger.error(`Failed to send to ${m.email}`, err as any);
+      }
 
       await new Promise((res) => setTimeout(res, 100));
     }
@@ -446,6 +479,16 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private lastPollAt: Date | null = null;
+
+  getStatus() {
+    return {
+      running: this.running,
+      connected: this.client?.usable ?? false,
+      lastPoll: this.lastPollAt?.toISOString() ?? null,
+    };
+  }
+
   async listInboxMessages() {
     const host = this.config.getOrThrow<string>('IMAP_HOST');
     const port = Number(this.config.get('IMAP_PORT'));
@@ -503,6 +546,6 @@ export class ImapService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    return result;
+    return result.reverse();
   }
 }

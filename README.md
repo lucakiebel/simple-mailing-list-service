@@ -378,18 +378,18 @@ Deployment Notes
 Roadmap / Ideas
 ---------------
 
-*   Admin UI (web frontend) for:
+*   [x] Delivery-Log-Datenbank (Versand-Tracking)
+*   [x] Admin-Frontend (Vue 3)
+*   [x] Moderations-API (Approve/Reject per API)
+*   [x] Debug-Ansicht für eingehende Mails
+*   [ ] BCC‑only list addressing (using IMAP envelope rather than To/Cc)
+*   [ ] Rate limiting and batch sending strategies for large lists
+*   [ ] Full TypeORM migrations instead of synchronize for production
 
-    *   managing lists and members
+---
 
-    *   viewing pending messages and moderation history
-
-*   Support for BCC‑only list addressing (using IMAP envelope rather than To/Cc)
-
-*   Rate limiting and batch sending strategies for large lists
-
-*   Full TypeORM migrations instead of synchronize for production
-
+Die Planung für das Admin-Frontend und Delivery-Log ist in [`docs/ARCHITEKTUR.md`](docs/ARCHITEKTUR.md) dokumentiert.
+Architekturentscheidungen sind als ADRs in [`docs/adr/`](docs/adr/) abgelegt.
 
 License
 -------
